@@ -7,7 +7,7 @@ import {
   fitWholeSong,
   tempoChangeCount,
 } from './quantize.js';
-import { dedupeNotes, allocateParts, maxPolyphony, describeTracks } from './allocate.js';
+import { dedupeNotes, allocateParts, maxPolyphony, describeTracks, splitTrackVoices } from './allocate.js';
 import { encodeScore, encodePart } from './encode.js';
 import { LIMITS, WHOLE, TPQN, clamp, instrumentById, PART_NAMES } from './spec.js';
 
@@ -25,6 +25,7 @@ export const DEFAULT_OPTIONS = {
   rangePolicy: 'octave',
   assignment: 'auto',
   trackMap: null,
+  splitMap: null,
   tieMode: 'melody',
   useN: true,
   velocity: 'fine',
@@ -108,7 +109,50 @@ function smoothVelocity(notes) {
   });
 }
 
-function trackReport(notes, parts, trackMap, names) {
+function applyVoiceSplits(notes, splitMap, names, minDur) {
+  if (!splitMap || typeof splitMap !== 'object') return { notes, names, info: [], dropped: 0 };
+  const targets = Object.entries(splitMap)
+    .map(([k, v]) => [Number(k), Math.min(4, Math.max(1, Number(v) || 1))])
+    .filter(([k, v]) => Number.isFinite(k) && v > 1);
+  if (!targets.length) return { notes, names, info: [], dropped: 0 };
+
+  const wanted = new Map(targets);
+  const byTrack = new Map();
+  for (const n of notes) {
+    const key = n.trk >= 0 ? n.trk : 0;
+    if (!byTrack.has(key)) byTrack.set(key, []);
+    byTrack.get(key).push(n);
+  }
+
+  const out = [];
+  const nameList = names.slice();
+  const info = [];
+  let next = Math.max(-1, ...byTrack.keys()) + 1;
+  let dropped = 0;
+
+  for (const key of [...byTrack.keys()].sort((a, b) => a - b)) {
+    const list = byTrack.get(key);
+    const count = wanted.get(key) || 1;
+    if (count <= 1) {
+      out.push(...list);
+      continue;
+    }
+    const split = splitTrackVoices(list, count, minDur);
+    dropped += split.dropped;
+    const base = nameList[key] || `トラック${key + 1}`;
+    split.voices.forEach((voice, i) => {
+      if (!voice.length) return;
+      const id = next++;
+      nameList[id] = `${base} [${i + 1}]`;
+      info[id] = { src: key, voice: i, count };
+      for (const n of voice) out.push({ ...n, trk: id });
+    });
+  }
+
+  return { notes: out, names: nameList, info, dropped };
+}
+
+function trackReport(notes, parts, trackMap, names, info = []) {
   const keyOf = (n) => `${n.start}:${n.pitch}:${n.trk}:${n.ch}`;
   const owner = new Map();
   parts.forEach((list, i) => list.forEach((n) => owner.set(keyOf(n), i)));
@@ -128,8 +172,12 @@ function trackReport(notes, parts, trackMap, names) {
     }
     const raw = trackMap ? trackMap[String(t.trk)] : undefined;
     const mapped = raw === undefined || raw === null ? null : Number(raw);
+    const meta = info[t.trk] || { src: t.trk, voice: 0, count: 1 };
     return {
       index: t.index,
+      src: meta.src,
+      voice: meta.voice,
+      count: meta.count,
       name: names[t.trk] || `トラック${t.trk + 1}`,
       notes: t.notes.length,
       meanPitch: Math.round(t.meanPitch),
@@ -142,7 +190,8 @@ function trackReport(notes, parts, trackMap, names) {
 
 function attempt(midiNotes, opts, bpm, grid, partCount, trackNames = []) {
   const prep = prepare(midiNotes, opts, bpm, grid);
-  const alloc = allocateParts(prep.notes, {
+  const split = applyVoiceSplits(prep.notes, opts.splitMap, trackNames, grid);
+  const alloc = allocateParts(split.notes, {
     parts: partCount,
     mode: opts.assignment,
     minDur: grid,
@@ -156,9 +205,11 @@ function attempt(midiNotes, opts, bpm, grid, partCount, trackNames = []) {
     grid,
     shift: prep.shift,
     clamped: prep.ranged.clamped,
-    dropped: alloc.dropped,
+    dropped: alloc.dropped + (split.dropped || 0),
     leadRest,
-    tracks: trackReport(prep.notes, alloc.parts, opts.trackMap, trackNames),
+    tracks: trackReport(split.notes, alloc.parts, opts.trackMap, split.names, split.info).sort(
+      (a, b) => a.src - b.src || a.voice - b.voice,
+    ),
   };
 }
 
