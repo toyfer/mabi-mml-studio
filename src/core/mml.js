@@ -32,13 +32,19 @@ export function parseMML(text, opts = {}) {
 
   const readLength = (fallback) => {
     const explicit = num();
-    let dotted = false;
-    if (src[i] === '.') {
-      dotted = true;
+    let dots = 0;
+    while (src[i] === '.') {
+      dots++;
       i++;
     }
-    if (!explicit) return fallback;
-    return Math.max(1, Math.round((WHOLE / explicit) * (dotted ? 1.5 : 1)));
+    const base = explicit ? WHOLE / explicit : fallback;
+    let ticks = base;
+    let add = base / 2;
+    for (let k = 0; k < dots; k++) {
+      ticks += add;
+      add /= 2;
+    }
+    return Math.max(1, Math.round(ticks));
   };
 
   const readNote = () => {
@@ -61,7 +67,7 @@ export function parseMML(text, opts = {}) {
         errors.push('nコマンドに番号がありません');
         return null;
       }
-      midi = v + 12;
+      midi = clamp(v + 12, 0, 127);
     } else {
       return null;
     }
@@ -119,10 +125,15 @@ export function parseMML(text, opts = {}) {
         errors.push('タイ（&）の後に音符がありません');
         continue;
       }
-      if (last) {
+      if (last && last.pitch === next.midi) {
         last.dur += next.ticks;
         last.end = last.start + last.dur;
         tick += next.ticks;
+      } else if (last) {
+        const ev = { start: tick, dur: next.ticks, end: tick + next.ticks, pitch: next.midi, vel, part: opts.part || 0 };
+        events.push(ev);
+        tick += next.ticks;
+        last = ev;
       } else {
         errors.push('タイ（&）の前に対象の音符がありません');
         tick += next.ticks;

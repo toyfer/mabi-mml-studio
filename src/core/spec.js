@@ -58,17 +58,31 @@ export function durationByTicks(ticks) {
   return DURATION_BY_TICKS.get(ticks) || null;
 }
 
-export function decompose(ticks, maxTerms = 3) {
+const SPLIT_CACHE = new Map();
+const MIN_TICK = DURATIONS[DURATIONS.length - 1].ticks;
+
+export function decompose(ticks, maxTerms = 4) {
   if (ticks <= 0) return [];
+  const key = `${ticks}:${maxTerms}`;
+  if (SPLIT_CACHE.has(key)) return SPLIT_CACHE.get(key);
   const out = [];
-  let rem = ticks;
-  while (rem > 0 && out.length < maxTerms) {
-    const d = DURATIONS.find((x) => x.ticks <= rem);
-    if (!d) return null;
-    out.push(d);
-    rem -= d.ticks;
-  }
-  return rem === 0 ? out : null;
+  let visits = 0;
+  const search = (rem, depth) => {
+    if (rem === 0) return true;
+    if (depth >= maxTerms || rem < MIN_TICK || visits > 4000) return false;
+    for (const d of DURATIONS) {
+      if (d.ticks > rem) continue;
+      if (rem - d.ticks > 0 && rem - d.ticks < MIN_TICK) continue;
+      visits++;
+      out.push(d);
+      if (search(rem - d.ticks, depth + 1)) return true;
+      out.pop();
+    }
+    return false;
+  };
+  const result = search(ticks, 0) ? out.slice() : null;
+  SPLIT_CACHE.set(key, result);
+  return result;
 }
 
 export function nearestDuration(ticks) {
@@ -90,7 +104,7 @@ export function bestDuration(target, max = Infinity) {
   for (const d of DURATIONS) {
     if (d.ticks > max) continue;
     const diff = Math.abs(d.ticks - target);
-    if (diff < bestDiff || (diff === bestDiff && best && d.ticks > best.ticks)) {
+    if (diff < bestDiff || (diff === bestDiff && best && d.ticks < best.ticks)) {
       best = d;
       bestDiff = diff;
     }

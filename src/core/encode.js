@@ -6,6 +6,7 @@ import {
   noteNumberOf,
   decompose,
   largestAtMost,
+  DURATIONS,
   bestDuration,
   durationByTicks,
   clamp,
@@ -38,7 +39,7 @@ function buildSegments(notes, offset, minDur, legato) {
     if (legato) target = limit === Infinity ? target : limit;
     let dur = bestDuration(target, limit).ticks;
     if (dur > limit) dur = limit;
-    segs.push({ kind: 'note', dur, pitch: n.pitch, vel: n.vel });
+    segs.push({ kind: 'note', dur, pitch: clamp(n.pitch, LIMITS.midiMin, LIMITS.midiMax), vel: n.vel });
     cursor = start + dur;
   }
   return { segs, dropped };
@@ -52,7 +53,8 @@ function runLengths(segs) {
   return runs;
 }
 
-function pitchToken(midi, state, allowN) {
+function pitchToken(rawMidi, state, allowN) {
+  const midi = clamp(rawMidi, LIMITS.midiMin, LIMITS.midiMax);
   const oct = octaveOf(midi);
   const name = nameOf(midi);
   const accidental = name.length > 1;
@@ -81,13 +83,17 @@ function encodeRest(ticks, state) {
     out += 'r'.repeat(wholes);
     rem -= wholes * WHOLE;
   }
+  const terms = decompose(rem, 5);
+  if (terms) {
+    for (const d of terms) out += d.l === state.length && !d.dotted ? 'r' : `r${d.text}`;
+    return out;
+  }
   let guard = 0;
   while (rem > 0 && guard++ < 64) {
-    const d = largestAtMost(rem);
-    if (!d || d.ticks > rem) break;
+    const d = DURATIONS.find((x) => x.ticks >= rem) || largestAtMost(rem);
+    if (!d || d.ticks <= 0) break;
     out += d.l === state.length && !d.dotted ? 'r' : `r${d.text}`;
     rem -= d.ticks;
-    if (d.ticks <= 0) break;
   }
   return out;
 }
@@ -145,21 +151,17 @@ export function encodePart(notes, options = {}) {
     }
 
     if (!ties) {
-      const single = durationByTicks(seg.dur) || largestAtMost(seg.dur);
+      const single = durationByTicks(seg.dur) || bestDuration(seg.dur, Infinity);
       const t = lengthToken(single, state, runs[i], true);
       const pt = pitchToken(seg.pitch, state, useN && (t === '' || t.startsWith('l')));
       state.octave = pt.octave;
       text += t.startsWith('l') ? t + pt.text : pt.text + t;
-      let rem = seg.dur - single.ticks;
-      while (rem > 0) {
-        const r = largestAtMost(rem);
-        text += `r${r.text}`;
-        rem -= r.ticks;
-      }
+      const rem = seg.dur - single.ticks;
+      if (rem > 0) text += encodeRest(rem, state);
       continue;
     }
 
-    const terms = decompose(seg.dur, 4) || [largestAtMost(seg.dur)];
+    const terms = decompose(seg.dur, 5) || [bestDuration(seg.dur, Infinity)];
     for (let k = 0; k < terms.length; k++) {
       const term = terms[k];
       if (k === 0) {
@@ -174,6 +176,8 @@ export function encodePart(notes, options = {}) {
         text += `&${pt.text}${t}`;
       }
     }
+    const used = terms.reduce((a, d) => a + d.ticks, 0);
+    if (used < seg.dur) text += encodeRest(seg.dur - used, state);
   }
 
   return { text, chars: text.length, dropped, segments: segs.length };
