@@ -15,7 +15,7 @@ export function dedupeNotes(notes, minDur, byTrack = false) {
       const dur = Math.max(minDur, n.dur);
       return { ...n, dur, end: n.start + dur };
     })
-    .sort((a, b) => a.start - b.start || b.pitch - a.pitch || b.vel - a.vel);
+    .sort((a, b) => a.start - b.start || a.pitch - b.pitch || b.vel - a.vel);
 }
 
 export function splitTrackVoices(notes, count, minDur) {
@@ -197,7 +197,7 @@ function extractMelody(notes) {
   }
   const src = (best ? best.notes : notes)
     .slice()
-    .sort((a, b) => a.start - b.start || a.pitch - b.pitch || a.vel - b.vel);
+    .sort((a, b) => a.start - b.start || b.pitch - a.pitch || b.vel - a.vel);
   const line = [];
   let end = -Infinity;
   let onset = -1;
