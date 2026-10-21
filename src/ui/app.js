@@ -233,7 +233,7 @@ function renderTrackMap(tracks) {
   const manual = $('#assignment').value === 'manual';
   const seg = $('.seg[data-opt="parts"]');
   if (seg) $$('button', seg).forEach((b) => { b.disabled = manual; });
-  wrap.hidden = !(manual && tracks.length);
+  wrap.hidden = !tracks.length;
   if (wrap.hidden) return;
 
   const box = $('#trackMap');
@@ -277,6 +277,8 @@ function renderTrackMap(tracks) {
       .join('');
     const current = state.trackMap ? state.trackMap[String(t.index)] : t.part;
     sel.value = current === null || current === undefined ? '' : String(current);
+    sel.disabled = !manual;
+    sel.title = manual ? '' : '自動割当中は変更できません（「手動」に切り替えると指定できます）';
     sel.addEventListener('change', () => {
       if (!state.trackMap) {
         state.trackMap = {};
