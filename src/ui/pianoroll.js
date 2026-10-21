@@ -1,4 +1,4 @@
-import { octaveOf } from '../core/spec.js';
+import { octaveOf, LIMITS } from '../core/spec.js';
 
 export const PART_COLORS = ['#7c9cff', '#4fe0c0', '#b78cff', '#ffb454', '#ff8fa3', '#7ee787'];
 
@@ -12,10 +12,30 @@ export class PianoRoll {
     this.active = 0;
     this.w = 0;
     this.h = 0;
+    this.rowH = 6;
+    this.hit = [];
+    this.drag = null;
+    this.preview = null;
+    this.editable = true;
+    this.onMove = null;
+    this.onSeek = null;
+    this.onSelect = null;
     this.resize();
     window.addEventListener('resize', () => {
       this.resize();
       this.draw();
+    });
+    this.bindPointer();
+  }
+
+  bindPointer() {
+    const c = this.canvas;
+    c.addEventListener('pointerdown', (e) => this.pointerDown(e));
+    c.addEventListener('pointermove', (e) => this.pointerMove(e));
+    c.addEventListener('pointerup', (e) => this.pointerUp(e));
+    c.addEventListener('pointercancel', () => this.cancelDrag());
+    c.addEventListener('pointerleave', () => {
+      if (!this.drag) c.style.cursor = 'default';
     });
   }
 
@@ -66,18 +86,88 @@ export class PianoRoll {
     return { lo, hi };
   }
 
+  pos(e) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  pick(x, y) {
+    for (let i = this.hit.length - 1; i >= 0; i--) {
+      const h = this.hit[i];
+      if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) return h;
+    }
+    return null;
+  }
+
+  pointerDown(e) {
+    const { x, y } = this.pos(e);
+    const hit = this.pick(x, y);
+    if (!hit) {
+      if (this.onSeek) this.onSeek((x / this.w) * this.duration);
+      return;
+    }
+    if (hit.part !== this.active) {
+      if (this.onSelect) this.onSelect(hit.part);
+      return;
+    }
+    if (!this.editable) return;
+    this.drag = { part: hit.part, index: hit.index, startY: y, startPitch: hit.pitch, pitch: hit.pitch };
+    this.canvas.setPointerCapture(e.pointerId);
+    this.canvas.style.cursor = 'ns-resize';
+  }
+
+  pointerMove(e) {
+    const { x, y } = this.pos(e);
+    if (!this.drag) {
+      const hit = this.pick(x, y);
+      this.canvas.style.cursor = hit && hit.part === this.active && this.editable ? 'ns-resize' : 'default';
+      return;
+    }
+    const delta = Math.round((y - this.drag.startY) / Math.max(1, this.rowH));
+    const pitch = Math.max(0, Math.min(127, this.drag.startPitch - delta));
+    if (pitch !== this.drag.pitch) {
+      this.drag.pitch = pitch;
+      this.preview = { part: this.drag.part, index: this.drag.index, pitch };
+      this.draw();
+    }
+  }
+
+  pointerUp() {
+    if (!this.drag) return;
+    const d = this.drag;
+    this.drag = null;
+    this.preview = null;
+    this.canvas.style.cursor = 'default';
+    if (d.pitch !== d.startPitch && this.onMove) this.onMove(d.part, d.index, d.pitch);
+    else this.draw();
+  }
+
+  cancelDrag() {
+    this.drag = null;
+    this.preview = null;
+    this.canvas.style.cursor = 'default';
+    this.draw();
+  }
+
+  pitchOf(part, index, fallback) {
+    if (this.preview && this.preview.part === part && this.preview.index === index) return this.preview.pitch;
+    return fallback;
+  }
+
   draw() {
     const ctx = this.ctx;
     const w = this.w;
     const h = this.h;
     ctx.clearRect(0, 0, w, h);
     if (!w || !h) return;
+    this.hit = [];
 
     const padTop = 10;
     const padBottom = 12;
     const { lo, hi } = this.bounds();
     const rows = hi - lo + 1;
     const rowH = (h - padTop - padBottom) / rows;
+    this.rowH = rowH;
     const yOf = (pitch) => padTop + (hi - pitch) * rowH;
 
     ctx.fillStyle = '#0d1119';
@@ -112,20 +202,42 @@ export class PianoRoll {
       return;
     }
 
+    let outside = 0;
     this.parts.forEach((notes, i) => {
       const dim = this.parts.length > 1 && i !== this.active;
       const color = PART_COLORS[i % PART_COLORS.length];
-      ctx.fillStyle = color;
-      ctx.globalAlpha = dim ? 0.32 : 0.95;
-      for (const n of notes) {
+      notes.forEach((n, k) => {
+        const pitch = this.pitchOf(i, k, n.pitch);
         const x = (n.start / this.duration) * w;
         const nw = Math.max(1.6, (n.dur / this.duration) * w);
-        const y = yOf(n.pitch);
+        const y = yOf(pitch);
         const nh = Math.max(2.2, rowH - 1);
+        const bad = pitch < LIMITS.midiMin || pitch > LIMITS.midiMax;
+        if (bad) outside++;
+
+        ctx.globalAlpha = dim ? 0.32 : 0.95;
+        ctx.fillStyle = bad ? '#ff5c6c' : color;
         ctx.fillRect(x, y - nh / 2 + rowH / 2 - 0.5, nw, nh);
-      }
-      ctx.globalAlpha = 1;
+
+        if (bad) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = 'rgba(255,92,108,0.9)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + 0.5, y - nh / 2 + rowH / 2 - 0.5, Math.max(2, nw), nh);
+        }
+        ctx.globalAlpha = 1;
+
+        if (i === this.active && !dim) {
+          this.hit.push({ part: i, index: k, pitch, x, y: y - nh / 2 + rowH / 2 - 0.5, w: Math.max(3, nw), h: nh });
+        }
+      });
     });
+
+    if (outside) {
+      ctx.fillStyle = 'rgba(255,92,108,0.9)';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillText(`音域外 ${outside}音`, w - 74, 14);
+    }
 
     if (this.playhead !== null) {
       const x = (this.playhead / this.duration) * w;
