@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>マビノギモバイル MML 仕様まとめ — MabiMML Studio</title>
+<meta name="description" content="マビノギモバイルのMML仕様を一次情報から整理。6パート・2,400文字・TPQN 960・テンポ変更の制約・同時発音15音など、変換器を作るために必要な全仕様。">
+<link rel="stylesheet" href="./assets/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c9cff'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%230a0c11' font-family='sans-serif'%3E%E2%99%AA%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="./index.html"><span class="brand-mark">♪</span><span>MabiMML Studio<small>MIDI → MML</small></span></a>
+    <nav class="nav">
+      <a href="./index.html">変換</a>
+      <a href="./spec.html" class="active">仕様</a>
+      <a href="./api.html">API</a>
+      <a href="https://github.com/toyfer/mabi-mml-studio" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap doc">
+  <h1>マビノギモバイル MML 仕様まとめ</h1>
+  <p class="sub">変換器を実装するために必要な仕様を、公式ガイド・検証記事・既存ツールの実装から整理したものです。2026年10月時点。</p>
+
+  <div class="badge-row">
+    <span class="tag ok">6パート</span>
+    <span class="tag ok">2,400文字 / パート</span>
+    <span class="tag ok">TPQN 960</span>
+    <span class="tag ok">o0〜o8 / n0〜n96</span>
+    <span class="tag ok">同時発音 約15</span>
+    <span class="tag ng">和音の途中テンポ変更</span>
+    <span class="tag ng">和音のタイ（&amp;）</span>
+  </div>
+
+  <h2 id="tldr">1. 先に結論</h2>
+  <p>マビノギモバイルの楽譜は、PC版マビノギのMMLと<strong>同じ文法</strong>を使いますが、<strong>楽譜の構造・制限・内部解釈は別物</strong>です。変換器の設計に効く差分は次の6点に集約されます。</p>
+
+  <table>
+    <thead><tr><th>項目</th><th>マビノギモバイル</th><th>PC版マビノギ</th></tr></thead>
+    <tbody>
+      <tr><td>パート構成</td><td>メロディ1＋和音最大5＝<strong>最大6パート</strong>。初期状態はメロディ＋和音2の3パート</td><td>メロディ／和音1／和音2／歌の4トラック</td></tr>
+      <tr><td>文字数</td><td><strong>各パート2,400文字</strong>（作曲スキルランクの概念なし）</td><td>作曲ランクで変動（F: 400／650 など）</td></tr>
+      <tr><td>内部解像度</td><td><strong>TPQN 960</strong>（4分音符＝960tick、全音符＝3,840tick）</td><td>TPQN 96 相当</td></tr>
+      <tr><td>テンポ</td><td>曲頭のテンポは全パート共通。<strong>途中変更はメロディにしか効かない</strong></td><td>全トラックに効く</td></tr>
+      <tr><td>タイ（&amp;）</td><td>メロディでは動作。<strong>和音1・2では不具合報告</strong></td><td>全トラックで動作</td></tr>
+      <tr><td>同時発音</td><td><strong>1人あたり約15音</strong>。超えると和音がランダムに欠落</td><td>256音程度（実質無制限）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>変換器にとっての意味：</strong>「PC版のMMLを出すツール」では足りません。①tickを960基準で丸める、②テンポ変更を平坦化する、③和音でタイを使わない、④6パートに音を配分する、⑤2,400文字に収める——この5つが必須要件になります。
+  </div>
+
+  <h2 id="structure">2. 楽譜の構造と入力フロー</h2>
+  <p>公式ガイドによると、楽器を装備し楽譜を所持した状態で演奏します。作曲は「空の楽譜」を雑貨屋の［楽器/楽譜］タブで購入し、［バッグ］→［道具］→［楽譜］→［楽譜編集］から行います。初期状態ではメロディ1パートと和音2パート、［＋和音追加］でメロディを含めて最大6パートまで作成できます。</p>
+  <p>MMLはテキスト欄に直接入力するほか、コピーしたコードを［ペースト］ボタンで貼り付けられます。パートごとにスピーカーボタンがあり、選択したパートをミュートした状態で試聴できます。「採譜可能」を有効にすると、他のプレイヤーが演奏中の曲を空の楽譜に記録できます。</p>
+
+  <h3>2.1 パート数とソロ／合奏</h3>
+  <p>作曲画面では6パートまで入力できますが、<strong>1人で同時に鳴らせるのは3パートまで</strong>という報告が複数あります。4パート目以降は合奏で他のプレイヤーが分担して初めて鳴ります。ただし、生活力で作れる上位楽器（4〜6和音）を使えば1人でも同時発音数を増やせるという観測もあり、ここは楽器のグレードに依存します。</p>
+  <p>実務的には「<strong>ソロ用は3パート、合奏前提なら6パート</strong>」で設計し、4パート以上を出力したときは警告を出すのが安全です。</p>
+
+  <h3>2.2 楽器と同時発音数</h3>
+  <p>楽器は<strong>単音楽器</strong>と<strong>和音楽器</strong>に大別されます。マンドリンやフルートは1音、リュートは1〜3音、バイオリンは4音、シャルモ（샬루모）は5音、シロフォンは6音まで同時に鳴らせます。楽器のグレード（2和音リュート、3和音リュート等）で上限が変わります。</p>
+  <p>検証記事では、楽器ごとに「安全に鳴る同時発音数」が実測されています。全体の上限は約15音で、16音を超えると和音のどれかがランダムに消えます。</p>
+
+  <table>
+    <thead><tr><th>楽器</th><th>同時発音の上限</th><th>安全に鳴る目安</th></tr></thead>
+    <tbody>
+      <tr><td>リュート</td><td>3音</td><td>11音</td></tr>
+      <tr><td>マンドリン</td><td>1音</td><td>11音</td></tr>
+      <tr><td>フルート</td><td>1音</td><td>11音</td></tr>
+      <tr><td>バイオリン</td><td>4音</td><td>13音</td></tr>
+      <tr><td>シャルモ</td><td>5音</td><td>8音</td></tr>
+      <tr><td>シロフォン</td><td>6音</td><td>14音</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.3 貼り付けの単位</h3>
+  <p>パートごとの入力欄に、そのパートのMML文字列を貼るのが基本です。PC版のクリップボード形式 <code>MML@t120l4cdefg,l4ceg,l4egc;</code> をそのまま貼ると、カンマで区切って各パートに分配されます。変換器の出力は「パート単体の文字列」と「MML@形式の結合文字列」の両方を用意するのが親切です。</p>
+
+  <h2 id="syntax">3. MMLの文法</h2>
+  <p>マビノギのMMLは、BASICのPLAY命令由来のMusic Macro Languageをゲーム向けに改造したものです。使えるコマンドは多くありません。</p>
+
+  <table>
+    <thead><tr><th>記法</th><th>意味</th><th>範囲・既定値</th></tr></thead>
+    <tbody>
+      <tr><td><code>c d e f g a b</code></td><td>音名（ド〜シ）。大文字小文字は同じ</td><td>—</td></tr>
+      <tr><td><code>+</code> / <code>#</code></td><td>半音上げ（シャープ）</td><td>音名の直後</td></tr>
+      <tr><td><code>-</code></td><td>半音下げ（フラット）</td><td>音名の直後</td></tr>
+      <tr><td><code>r</code></td><td>休符</td><td>長さ指定可</td></tr>
+      <tr><td><code>1</code>〜<code>64</code>（音長）</td><td>全音符を1とした分母。4＝4分音符</td><td>音名の直後</td></tr>
+      <tr><td><code>.</code></td><td>付点（1.5倍）。複数付点は不可</td><td>音長の直後</td></tr>
+      <tr><td><code>l</code></td><td>既定の音長。以降の音名は数字を省略できる</td><td>1〜64</td></tr>
+      <tr><td><code>o</code></td><td>オクターブ指定</td><td>0〜8（既定4）</td></tr>
+      <tr><td><code>&lt;</code> / <code>&gt;</code></td><td>オクターブを1つ下げる／上げる</td><td>—</td></tr>
+      <tr><td><code>t</code></td><td>テンポ（BPM）</td><td>32〜255（既定120）</td></tr>
+      <tr><td><code>v</code></td><td>音量（ベロシティ）</td><td>0〜15（0で無音）</td></tr>
+      <tr><td><code>n</code></td><td>音高を番号で直接指定</td><td>0〜96</td></tr>
+      <tr><td><code>&amp;</code></td><td>タイ。同音を連結する</td><td>同音のみ。スラーではない</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.1 音高と音域</h3>
+  <p>音高の指定方法は2つあります。オクターブ番号＋音名（<code>o4c</code>）と、ノート番号（<code>n60</code>）です。ノート番号は<code>n0</code>が<code>o0c</code>、<code>n60</code>が<code>o5c</code>、<code>n96</code>が<code>o8c</code>に対応し、97以上は96として扱われます。つまり<strong>ノート番号＝オクターブ×12＋半音</strong>です。</p>
+  <p>MML全体の音域は<code>o0c</code>から<code>o8c</code>までの97音（96半音）。これを外れる音はゲーム側で丸められるか鳴りません。楽器ごとの実音域はさらに狭く、たとえばリュートやフルートは高音側で音が出ないことがあります。</p>
+
+  <div class="callout">
+    <strong>実装上の注意：</strong><code>n</code>コマンドは<strong>音長を直接指定できません</strong>。<code>l</code>で設定した既定長だけが適用されるため、<code>n60</code>を使う場合は直前に<code>l</code>を置く必要があります。文字数節約になるのは「オクターブ移動＋臨時記号」が同時に必要な場合（例：<code>o5c+</code>＝4文字 vs <code>n61</code>＝3文字）だけです。
+  </div>
+
+  <h3>3.2 音長の表し方</h3>
+  <p>音長は「全音符の分母」で表します。<code>4</code>が4分音符、<code>8</code>が8分音符、<code>16</code>が16分音符です。付点を付けると1.5倍になりますが、<strong>複数付点は効きません</strong>。<code>l4.</code>の後に<code>c.</code>と書いても1.5拍のままで、2.25拍にはなりません。</p>
+  <p>マビノギモバイルでは、PC版で問題になった「2の倍数以外の音長が使えない」制約が緩和され、<strong>連符を含む任意の音長が使える</strong>という検証結果があります。ただし非標準の音長は音がずれる原因になるため、変換器側では安全な値に丸めるのが無難です。</p>
+
+  <h2 id="tick">4. TPQN 960 とtick計算</h2>
+  <p>マビノギモバイルの演奏エンジンは<strong>TPQN 960</strong>で作られています。4分音符＝960tick、全音符＝3,840tickです。MMLの音長は<code>3,840 ÷ 分母</code>でtickに変換されるため、<strong>分母が3,840を割り切れない音長はtick誤差を生みます</strong>。</p>
+
+  <table>
+    <thead><tr><th>音長</th><th>tick</th><th>3,840で割り切れるか</th></tr></thead>
+    <tbody>
+      <tr><td><code>l4</code>（4分）</td><td>960</td><td>○</td></tr>
+      <tr><td><code>l8</code>（8分）</td><td>480</td><td>○</td></tr>
+      <tr><td><code>l16</code>（16分）</td><td>240</td><td>○</td></tr>
+      <tr><td><code>l12</code>（8分3連）</td><td>320</td><td>○</td></tr>
+      <tr><td><code>l24</code>（16分3連）</td><td>160</td><td>○</td></tr>
+      <tr><td><code>l32</code>（32分）</td><td>120</td><td>○</td></tr>
+      <tr><td><code>l64</code>（64分）</td><td>60</td><td>○</td></tr>
+      <tr><td><code>l5</code>（4分5連）</td><td>768</td><td>○</td></tr>
+      <tr><td><code>l7</code></td><td>548.57…</td><td>×</td></tr>
+      <tr><td><code>l54</code></td><td>71.11…</td><td>×</td></tr>
+      <tr><td><code>l34</code></td><td>112.94…</td><td>×</td></tr>
+    </tbody>
+  </table>
+
+  <p>MabiIccoの開発者による検証でも、<code>l38</code>や<code>l54</code>のような「10+10+76tick」を狙った圧縮指定がTPQN 960で誤差を起こすことが報告されています。変換器は<strong>3,840を割り切る分母だけを使う</strong>のが正解です。割り切れない長さは、タイで分割するか、音符＋休符に分解して拍を合わせます。</p>
+
+  <h2 id="bugs">5. 既知の不具合と回避策</h2>
+
+  <h3>5.1 和音パートの途中テンポ変更が効かない</h3>
+  <p>もっとも厄介な仕様です。テンポ120で始まり4小節目から180に変わる曲を考えると、メロディは120→180と正しく進みますが、<strong>和音パートは最初に宣言されたテンポのまま</strong>進みます。結果として和音が0.5小節ずつ後ろにずれていきます。</p>
+  <p>つまり<strong>メロディ以外のトラックでは、最初のテンポ以外への変更が無視される</strong>ということです。変換器の取るべき道は2つです。</p>
+  <ul>
+    <li><strong>平坦化</strong>：曲全体を1つのBPMに変換し、実時間を保ったままテンポ変更を消す（本サイトの既定）</li>
+    <li><strong>メロディのみテンポ変更を残す</strong>：和音は最初のテンポで固定されるため、実質的に破綻する</li>
+  </ul>
+  <p>平坦化する場合、各音符の時刻を秒に直し、目標BPMで再びtickに戻すことで、聴感上の長さを変えずにテンポ変更を除去できます。</p>
+
+  <h3>5.2 和音パートでタイ（&amp;）が使えない</h3>
+  <p>和音1・和音2では<code>&amp;</code>が正しく処理されないという報告があります。メロディでは問題なく動きます。変換器は和音パートで<code>&amp;</code>を避け、「音符＋休符」で拍を合わせるのが安全です。音は少し短くなりますが、次の音の開始位置は正確に保たれます。</p>
+
+  <h3>5.3 試聴でゲームが落ちる</h3>
+  <p>和音を使っていて、メロディの前半がほとんど休符、という条件が重なると試聴時にクライアントが落ちる不具合があります。回避策は<strong>0小節目を空けてテンポだけ置く</strong>こと。つまり<code>t120r1</code>のように、先頭に1小節の休符を入れてから本編を始めます。</p>
+
+  <h3>5.4 同時発音15音の壁</h3>
+  <p>1人あたりの同時発音は約15音で、16音を超えると和音のどれかがランダムに消えます。合奏では参加者ごとに上限が適用されるため、人数分だけ余裕ができます。ソロ用の譜面は2和音以内に抑えるのが実用的という指摘もあります。</p>
+
+  <h3>5.5 音がランダムに途切れる</h3>
+  <p>特定の音符がランダムに消える現象はクライアント側の不具合で、該当箇所の音符数を少し減らすと緩和されます。変換器で音符を間引くときの判断材料になります。</p>
+
+  <h2 id="chars">6. 文字数と圧縮</h2>
+  <p>日本版のプレイヤーによる検証では<strong>全パート2,400文字</strong>です。MabiIccoのマビノギモバイル向け出力も「各パート2,400文字まで」と明記しています。一方、韓国版のメディア記事には「メロディ1＋和音5、それぞれ1,200文字」という記述もあり、地域・バージョンによって差がある可能性があります。変換器の上限は設定可能にしておくべきです。</p>
+  <p>なお日本版の公式ガイドには文字数の記載がなく、ゲーム内の入力欄の挙動から上限を推定するしかありません。</p>
+
+  <h3>6.1 文字を減らす順番</h3>
+  <ol>
+    <li><code>l</code>で既定長をまとめる（同じ長さが2回以上続くときだけ得）</li>
+    <li>休符をまとめる。長い休符は<code>l1</code>＋<code>r</code>の繰り返しにする</li>
+    <li>オクターブ移動を<code>&lt;</code>／<code>&gt;</code>で書く（<code>o5</code>は2文字、<code>&gt;</code>は1文字）</li>
+    <li><code>n</code>コマンドが短くなる箇所だけ<code>n</code>を使う</li>
+    <li>クオンタイズを粗くする（1/192 → 1/96 → 1/64 …）</li>
+    <li>パートを分割する（後述）</li>
+    <li>優先度の低い音符を削る</li>
+    <li>曲を打ち切る</li>
+  </ol>
+
+  <h3>6.2 パート分割という解法</h3>
+  <p>文字数制限は<strong>パートごと</strong>にかかります。つまり1本の旋律が2,400文字を超える場合、その旋律を時間方向に2分割して別パートに置けば、音を1つも失わずに上限へ収められます。各パートは先頭に長い休符を持つことになりますが、演奏は同時なので聴感は変わりません。</p>
+  <p>本サイトはこの方法を自動で行います。6パートまで使えるため、理論上は2,400×6＝14,400文字まで表現できます（ソロで鳴るのは3パートまでなので、実質7,200文字）。</p>
+
+  <h2 id="tools">7. 既存ツールの比較</h2>
+  <p>「他の変換サイトの良いところを全部取る」ために、主要ツールの機能を整理しました。</p>
+
+  <table>
+    <thead><tr><th>ツール</th><th>方式</th><th>強み</th><th>弱み</th></tr></thead>
+    <tbody>
+      <tr><td>3MLE</td><td>デスクトップ（Windows）</td><td>PC版MMLの定番。トラック自動割当、文字数最適化、和音の可視化</td><td>モバイル非対応。6パートやTPQN 960を考慮しない</td></tr>
+      <tr><td>MabiIcco</td><td>デスクトップ（Windows）</td><td>ピアノロール編集、ゲーム音源での再生、1.5.7以降はモバイル専用出力（最大6トラック、Nコマンド許可）</td><td>インストールが必要。Web共有なし</td></tr>
+      <tr><td>meganen コンバーター</td><td>Web（ブラウザ内）</td><td>MIDIドロップだけで変換、パート別文字数と2,400文字チェック、6行出力</td><td>編集機能なし。共有・APIなし</td></tr>
+      <tr><td>夜光MML工房（mml.mabi.tw）</td><td>Web</td><td>MIDIインポート、ピアノロール、ゲーム音色の試聴、ワンクリック共有、日英韓対応、音域外の自動丸め</td><td>変換オプションはやや少なめ</td></tr>
+      <tr><td>MobiMML</td><td>Web</td><td>音声→MML（AI採譜）、ベロシティレーン、音符クリーンアップ、区間ごとの書き出し、保存スロット</td><td>AIモデルの初回ダウンロードが重い（約170MB）</td></tr>
+      <tr><td>ai-musicbox</td><td>Web</td><td>楽譜ライブラリ、YouTubeからAI採譜、ブラウザでそのまま演奏</td><td>変換の細かい制御はできない</td></tr>
+      <tr><td><strong>本サイト</strong></td><td>Web＋API</td><td>上記の強みを統合。TPQN 960のtick厳密化、テンポ平坦化、和音タイ回避、パート分割による文字数回避、JS API＋REST Worker</td><td>音声入力（AI採譜）は未対応</td></tr>
+    </tbody>
+  </table>
+
+  <h3>7.1 本サイトが各ツールから取り入れたもの</h3>
+  <table>
+    <thead><tr><th>出典</th><th>取り入れた機能</th></tr></thead>
+    <tbody>
+      <tr><td>3MLE</td><td>トラック／音域による自動パート割当、文字数を見据えた<code>l</code>・<code>&lt;</code>・<code>n</code>の最適化</td></tr>
+      <tr><td>MabiIcco</td><td>モバイル専用出力（6トラック、Nコマンド許可）、ピアノロールでの確認、tick誤差への配慮</td></tr>
+      <tr><td>meganen</td><td>ドロップ即変換、パート別文字数メーター、2,400文字チェック</td></tr>
+      <tr><td>夜光MML工房</td><td>ブラウザ内完結、ゲーム音色に近い試聴、共有リンク、音域外の自動処理</td></tr>
+      <tr><td>MobiMML</td><td>ベロシティ制御、音符の整理、区間書き出し（打ち切り）、保存</td></tr>
+      <tr><td>ai-musicbox</td><td>サンプル楽曲ですぐ試せる導線</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="design">8. 変換アルゴリズム</h2>
+  <p>本サイトの変換は次の順序で行います。すべてブラウザ内のJavaScriptで完結します。</p>
+  <ol>
+    <li><strong>MIDI解析</strong>：SMF形式0/1、ランニングステータス、テンポマップ、トラック名、チャンネルを読む</li>
+    <li><strong>テンポ平坦化</strong>：各音符の時刻を秒に変換し、採用BPMでTPQN 960のtickに戻す</li>
+    <li><strong>クオンタイズ</strong>：20tick（1/192）単位に丸め。音長は「近い標準音長」にスナップし、次の音を食わない範囲に収める</li>
+    <li><strong>音域処理</strong>：曲全体をオクターブ単位で移調し、それでも外れる音は丸めるか警告</li>
+    <li><strong>パート割当</strong>：メロディトラックを推定してパート0に固定。残りを音域の近さでモノフォニックに配分。入りきらない音は直前の音を切ってねじ込む</li>
+    <li><strong>MML生成</strong>：音長・オクターブ・臨時記号・<code>n</code>コマンドの4通りを文字数で比較して最短を選ぶ。和音は<code>&amp;</code>を避ける</li>
+    <li><strong>文字数調整</strong>：クオンタイズを粗くする → パートを分割する → 音符を削る → 打ち切る、の順で試す</li>
+    <li><strong>検証</strong>：生成したMMLを再パースし、音符数と発音位置が一致するか確認</li>
+  </ol>
+
+  <h2 id="sources">9. 出典</h2>
+  <ul>
+    <li><a href="https://mabinogimobile.nexon.co.jp/about/guide/3541657" target="_blank" rel="noopener">マビノギモバイル 公式ガイド「楽器演奏」</a> — パート数、ペースト、試聴、採譜</li>
+    <li><a href="https://note.com/grainne_tar/n/nd0edf5ca3808" target="_blank" rel="noopener">【マビモバ】マビノギモバイルにおける楽器演奏について</a> — 2,400文字、6パート、楽器ごとの和音数</li>
+    <li><a href="https://www.mabicompose.com/lecture02/mabinogi_mobile_clipboard" target="_blank" rel="noopener">MabiIcco マニュアル「マビノギモバイルに貼り付け」</a> — 2,400文字、最大6トラック、Nコマンド</li>
+    <li><a href="https://edgestorm.tistory.com/513" target="_blank" rel="noopener">마비노기 모바일의 작곡과 버그에 관하여</a> — テンポ計算バグ、同時発音15音、楽器別の安全値、クラッシュ条件</li>
+    <li><a href="https://github.com/fourthline/mmlTools/issues/122" target="_blank" rel="noopener">mmlTools Issue #122「マビノギモバイルモードへの提案」</a> — TPQN 960、tick誤差、15連音の実証</li>
+    <li><a href="https://3ml.mabi.tw/en/guide/mml" target="_blank" rel="noopener">Mabinogi MML Syntax（夜光MML Workshop）</a> — 文法、音域、テンポの全トラック適用、文字数</li>
+    <li><a href="https://colimoshirabell.com/mabimml-reference-n-command.html" target="_blank" rel="noopener">マビノギMMLのNコマンド</a> — n0＝o0c、n60＝o5c、n0〜96</li>
+    <li><a href="https://redfreshet.com/mabinogi-mobile-mml/" target="_blank" rel="noopener">【マビノギモバイル】MMLの使い方</a> — 貼り付け手順、日本版ガイドに文字数記載なし</li>
+    <li><a href="https://karakeyome.blog.fc2.com/blog-entry-1501.html" target="_blank" rel="noopener">マビノギモバイル 楽器演奏とMMLと著作権周り</a> — ソロ3パート、4〜6は合奏限定</li>
+    <li><a href="https://meganen.sakura.ne.jp/app/mabinogi_converter.html" target="_blank" rel="noopener">meganen マビノギモバイル MMLコンバーター</a> — 2,400文字チェックの実装例</li>
+    <li><a href="https://mobimml.com/guide" target="_blank" rel="noopener">MobiMML 使用ガイド</a> — 2,400文字トリム、編集機能</li>
+    <li><a href="https://www.gamechosun.co.kr/webzine/article/view.php?no=212784" target="_blank" rel="noopener">게임조선 楽器演劇記事</a> — 韓国版の1,200文字という記述</li>
+  </ul>
+
+  <div class="callout">
+    <strong>検証について：</strong>本サイトの出力は、生成したMMLを独自パーサで再解釈し、音符数・発音位置・音長が入力と一致することを自動テストで確認しています。ただしゲームクライアントでの実機再生は未検証です。破綻する箇所があれば、パート数・クオンタイズ・タイ設定を変えて試してください。
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>MabiMML Studio — 非公式ツールです。NEXON / マビノギモバイルとは関係ありません。</span>
+    <span><a href="./index.html">変換に戻る</a></span>
+  </div>
+</footer>
+</body>
+</html>
