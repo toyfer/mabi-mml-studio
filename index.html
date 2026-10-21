@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MabiMML Studio — MIDIからマビノギモバイルMMLへ変換</title>
+<meta name="description" content="MIDIファイルをマビノギモバイル対応のMMLへブラウザ内で変換。6パート自動割当、TPQN 960のtick精度、パートごと2400文字の自動最適化、試聴、共有、API対応。">
+<link rel="stylesheet" href="./assets/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c9cff'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%230a0c11' font-family='sans-serif'%3E%E2%99%AA%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="./index.html">
+      <span class="brand-mark">♪</span>
+      <span>MabiMML Studio<small>MIDI → MML</small></span>
+    </a>
+    <nav class="nav">
+      <a href="./index.html" class="active">変換</a>
+      <a href="./spec.html">仕様</a>
+      <a href="./api.html">API</a>
+      <a href="https://github.com/toyfer/mabi-mml-studio" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="wrap hero" id="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Mabinogi Mobile MML Toolkit</p>
+      <h1>MIDIを、そのまま<br><span>マビモバの楽譜</span>に。</h1>
+      <p class="lede">
+        6パート自動割当、TPQN 960のtick精度、パートごと2,400文字の自動最適化。
+        変換はすべてブラウザ内で完結し、MIDIファイルはどこにも送信されません。
+      </p>
+      <div class="chips">
+        <span class="chip"><b>6</b> パート</span>
+        <span class="chip"><b>2,400</b> 文字/パート</span>
+        <span class="chip"><b>TPQN 960</b> 対応</span>
+        <span class="chip">タイ／Nコマンド最適化</span>
+        <span class="chip">共有リンク</span>
+        <span class="chip">JS API</span>
+      </div>
+    </div>
+
+    <div class="dropzone" id="drop">
+      <input type="file" id="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+      <div class="dz-icon">⇪</div>
+      <p><strong>MIDIファイルをドロップ</strong></p>
+      <p class="muted">.mid / .midi に対応 — <span class="link" id="pick">ファイルを選択</span></p>
+      <button class="btn" id="sample" type="button">サンプルで試す</button>
+      <p class="hint">ドラッグ＆ドロップはページのどこでもOK</p>
+    </div>
+  </section>
+
+  <section class="wrap studio" id="studio" hidden>
+    <div class="studio-top">
+      <div class="file-info">
+        <span class="dot"></span>
+        <span class="name" id="fileName">—</span>
+        <span class="meta" id="fileMeta"></span>
+      </div>
+      <div class="transport">
+        <button class="btn primary" id="play" type="button">▶ 試聴</button>
+        <button class="btn" id="stop" type="button" aria-label="停止">■</button>
+        <span class="vol"><input type="range" id="volume" min="0" max="100" value="80" aria-label="音量"></span>
+      </div>
+      <div class="actions">
+        <button class="btn" id="copyAll" type="button">MML@ をコピー</button>
+        <button class="btn" id="share" type="button">共有リンク</button>
+        <button class="btn" id="download" type="button">ファイル保存</button>
+        <button class="btn ghost" id="reset" type="button">別のMIDI</button>
+      </div>
+    </div>
+
+    <div class="studio-grid">
+      <aside class="panel" id="options">
+        <div class="panel-head">変換オプション</div>
+        <div class="options-body">
+          <div class="opt">
+            <label>パート数</label>
+            <div class="seg" data-opt="parts">
+              <button type="button" data-v="1">1</button>
+              <button type="button" data-v="2">2</button>
+              <button type="button" data-v="3" class="on">3</button>
+              <button type="button" data-v="4">4</button>
+              <button type="button" data-v="5">5</button>
+              <button type="button" data-v="6">6</button>
+            </div>
+            <p class="note">ソロで鳴るのは3パートまで。4〜6は合奏用です。</p>
+          </div>
+
+          <div class="opt">
+            <label for="instrument">楽器（同時発音の目安）</label>
+            <select id="instrument" data-opt="instrument">
+              <option value="lute">リュート — 3音</option>
+              <option value="mandolin">マンドリン — 1音</option>
+              <option value="flute">フルート — 1音</option>
+              <option value="violin">バイオリン — 4音</option>
+              <option value="salumo">シャルモ — 5音</option>
+              <option value="xylophone">シロフォン — 6音</option>
+            </select>
+          </div>
+
+          <div class="opt">
+            <label for="bpm">テンポ（BPM）</label>
+            <div class="row">
+              <input type="number" id="bpm" data-opt="bpm" min="32" max="255" placeholder="自動">
+              <button class="btn tiny ghost" id="bpmAuto" type="button">自動</button>
+            </div>
+            <p class="note">空欄でMIDIのテンポを自動採用。曲中のテンポ変更は一定テンポに平坦化します。</p>
+          </div>
+
+          <div class="opt">
+            <label for="grid">クオンタイズ</label>
+            <select id="grid" data-opt="grid">
+              <option value="10">1/384（超高精度）</option>
+              <option value="20" selected>1/192（高精度）</option>
+              <option value="40">1/96</option>
+              <option value="60">1/64</option>
+              <option value="80">1/48</option>
+              <option value="120">1/32</option>
+              <option value="160">1/24</option>
+              <option value="240">1/16</option>
+            </select>
+          </div>
+
+          <div class="opt">
+            <label for="transpose">移調（半音）</label>
+            <input type="number" id="transpose" data-opt="transpose" min="-24" max="24" value="0">
+          </div>
+
+          <details class="advanced">
+            <summary>詳細設定</summary>
+            <div class="options-body">
+              <div class="opt">
+                <label for="charLimit">文字数上限 / パート</label>
+                <input type="number" id="charLimit" data-opt="charLimit" min="200" max="8000" step="100" value="2400">
+                <p class="note">日本版・韓国版ともに2,400字。旧環境では1,200字の報告もあります。</p>
+              </div>
+              <div class="opt">
+                <label for="tieMode">タイ（&amp;）の使い方</label>
+                <select id="tieMode" data-opt="tieMode">
+                  <option value="melody">メロディのみ（推奨）</option>
+                  <option value="all">全パートで使う</option>
+                  <option value="none">使わない</option>
+                </select>
+                <p class="note">和音パートの &amp; は不具合報告があるため、既定では音符＋休符で拍を合わせます。</p>
+              </div>
+              <div class="opt">
+                <label for="velocity">ベロシティ（v）</label>
+                <select id="velocity" data-opt="velocity">
+                  <option value="fine">細かく再現（0〜15）</option>
+                  <option value="coarse">粗く再現（5段階）</option>
+                  <option value="off">使わない（文字数節約）</option>
+                </select>
+              </div>
+              <div class="opt">
+                <label for="assignment">パート割当</label>
+                <select id="assignment" data-opt="assignment">
+                  <option value="auto">自動（音域＋和音）</option>
+                  <option value="track">MIDIトラック順</option>
+                  <option value="channel">MIDIチャンネル順</option>
+                </select>
+              </div>
+              <div class="opt">
+                <label for="leadRest">先頭に1小節の休符</label>
+                <select id="leadRest" data-opt="leadRest">
+                  <option value="auto">自動（必要時）</option>
+                  <option value="always">常に入れる</option>
+                  <option value="never">入れない</option>
+                </select>
+                <p class="note">メロディが長く休む曲でプレビューが落ちる不具合の回避策です。</p>
+              </div>
+              <div class="opt">
+                <label for="rangePolicy">音域外の音</label>
+                <select id="rangePolicy" data-opt="rangePolicy">
+                  <option value="octave">オクターブ移動</option>
+                  <option value="clamp">上下限に丸める</option>
+                  <option value="keep">そのまま（警告のみ）</option>
+                </select>
+              </div>
+              <div class="opt">
+                <label class="check"><input type="checkbox" id="useN" data-opt="useN" checked> Nコマンドを使う</label>
+                <p class="note">臨時記号＋オクターブ移動より短くなる場合だけ採用します。</p>
+              </div>
+              <div class="opt">
+                <label class="check"><input type="checkbox" id="autoFit" data-opt="autoFit" checked> 曲全体を音域に収める</label>
+              </div>
+              <div class="opt">
+                <label class="check"><input type="checkbox" id="autoReduce" data-opt="autoReduce" checked> 文字数超過時に音符を削って収める</label>
+              </div>
+              <div class="opt">
+                <label class="check"><input type="checkbox" id="trim" data-opt="trim"> 収まらない場合は曲を打ち切る</label>
+              </div>
+            </div>
+          </details>
+        </div>
+      </aside>
+
+      <section class="panel editor">
+        <div class="tabs" id="tabs"></div>
+        <div class="roll"><canvas id="roll"></canvas></div>
+        <div class="code-bar">
+          <span class="label" id="partLabel">メロディ</span>
+          <div class="meter"><i id="meterBar"></i></div>
+          <span id="charCount">0 / 2400</span>
+          <button class="btn tiny" id="copyPart" type="button">コピー</button>
+        </div>
+        <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="MMLコード"></textarea>
+      </section>
+
+      <aside class="panel" id="side">
+        <div class="panel-head">解析結果</div>
+        <div class="side-body">
+          <div class="stat-grid" id="stats"></div>
+          <div class="warn-list" id="warnings"></div>
+          <div class="warn-item info">ゲーム内では バッグ → 道具 → 楽譜 → 楽譜編集 を開き、各パートの［ペースト］に貼り付けてください。</div>
+          <div class="side-actions">
+            <button class="btn" id="copyJson" type="button">JSONでコピー</button>
+            <button class="btn" id="saveLocal" type="button">ブラウザに保存</button>
+            <button class="btn ghost" id="loadLocal" type="button">保存内容を復元</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>MabiMML Studio — 非公式ツールです。NEXON / マビノギモバイルとは関係ありません。</span>
+    <span>ブラウザ内処理・サーバー送信なし</span>
+  </div>
+</footer>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./src/ui/app.js"></script>
+</body>
+</html>
