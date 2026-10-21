@@ -21,6 +21,7 @@ const state = {
   limit: LIMITS.charsPerPart,
   manual: false,
   trackMap: null,
+  splitMap: {},
 };
 
 const player = new MabiPlayer();
@@ -57,15 +58,8 @@ function readOptions() {
       o[key] = el.value;
     }
   }
-  if (o.assignment === 'manual') {
-    if (!state.trackMap && state.result && state.result.tracks) {
-      state.trackMap = {};
-      state.result.tracks.forEach((t) => {
-        state.trackMap[String(t.index)] = t.part >= 0 ? t.part : -1;
-      });
-    }
-    if (state.trackMap) o.trackMap = { ...state.trackMap };
-  }
+  if (Object.keys(state.splitMap).length) o.splitMap = { ...state.splitMap };
+  if (o.assignment === 'manual' && state.trackMap) o.trackMap = { ...state.trackMap };
   return o;
 }
 
@@ -109,6 +103,7 @@ function loadFile(buffer, name) {
   state.buffer = buffer;
   state.fileName = name;
   state.trackMap = null;
+  state.splitMap = {};
   $('#hero').hidden = true;
   $('#studio').hidden = false;
   $('#fileName').textContent = name;
@@ -129,6 +124,13 @@ function render() {
     `v${VERSION}`,
   ];
   $('#fileMeta').textContent = meta.join(' · ');
+
+  if ($('#assignment').value === 'manual' && !state.trackMap && result.tracks && result.tracks.length) {
+    state.trackMap = {};
+    result.tracks.forEach((t) => {
+      state.trackMap[String(t.index)] = t.part >= 0 ? t.part : -1;
+    });
+  }
 
   renderTabs();
   renderStats();
@@ -236,13 +238,38 @@ function renderTrackMap(tracks) {
 
   const box = $('#trackMap');
   box.innerHTML = '';
+  let lastSrc = null;
+
   tracks.forEach((t) => {
+    const src = t.src === undefined ? t.index : t.src;
+    const first = src !== lastSrc;
+    lastSrc = src;
+
     const row = document.createElement('div');
     row.className = 'track-row';
+    row.style.gridTemplateColumns = 'minmax(0, 1fr) 58px 84px';
 
     const info = document.createElement('div');
     info.className = 'track-name';
     info.innerHTML = `<b>${escapeHtml(t.name)}</b><span>${t.notes}音 · 平均${t.meanPitch} · 最大${t.polyphony}音</span>`;
+
+    if (first) {
+      const split = document.createElement('select');
+      split.style.cssText = 'padding:4px 4px;font-size:11px;text-align:center;';
+      split.title = 'このトラックを声部に分割';
+      split.innerHTML = [1, 2, 3, 4].map((n) => `<option value="${n}">${n}声</option>`).join('');
+      split.value = String(state.splitMap[String(src)] || 1);
+      split.addEventListener('change', () => {
+        const n = Number(split.value);
+        if (n > 1) state.splitMap[String(src)] = n;
+        else delete state.splitMap[String(src)];
+        state.trackMap = null;
+        convert();
+      });
+      row.append(info, split);
+    } else {
+      row.append(info, document.createElement('div'));
+    }
 
     const sel = document.createElement('select');
     sel.innerHTML = ['<option value="">自動</option>', '<option value="-1">除外</option>']
@@ -262,7 +289,7 @@ function renderTrackMap(tracks) {
       convert();
     });
 
-    row.append(info, sel);
+    row.append(sel);
     box.appendChild(row);
   });
 }
@@ -430,6 +457,7 @@ async function applyShared(data) {
   state.fileName = data.name || 'shared.mml';
   state.manual = true;
   state.trackMap = null;
+  state.splitMap = {};
   state.limit = Number($('#charLimit').value) || LIMITS.charsPerPart;
   state.active = 0;
   setOption('bpm', state.bpm);
