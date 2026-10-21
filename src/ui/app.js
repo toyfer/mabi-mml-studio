@@ -349,10 +349,15 @@ function moveNote(partIndex, noteIndex, pitch) {
     updateMeter(out.text);
   }
   updateRoll();
-  if (pitch < LIMITS.midiMin || pitch > LIMITS.midiMax) {
-    toast(`${describeNote(pitch)} はMMLの音域外（o0〜o8）です。この音は鳴りません`, 'error');
+  const applied = parseScore(state.texts[partIndex] || '')[0].events[noteIndex];
+  const finalPitch = applied ? applied.pitch : pitch;
+  const limit = state.limit || LIMITS.charsPerPart;
+  if (finalPitch !== pitch) {
+    toast(`${describeNote(pitch)} は音域外なので ${describeNote(finalPitch)} に丸めました`, 'error');
+  } else if (out.text.length > limit) {
+    toast(`文字数上限を超えました（${out.text.length}/${limit}）`, 'error');
   } else {
-    toast(`${describeNote(pitch)} に移動しました`);
+    toast(`${describeNote(finalPitch)} に移動しました`);
   }
 }
 
