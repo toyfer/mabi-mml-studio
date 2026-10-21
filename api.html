@@ -62,7 +62,8 @@ console.log(result.combined);   // MML@...,...,...;
       <tr><td><code>transpose</code></td><td>number</td><td>0</td><td>半音単位の移調（-36〜36）</td></tr>
       <tr><td><code>charLimit</code></td><td>number</td><td>2400</td><td>パートごとの文字数上限</td></tr>
       <tr><td><code>rangePolicy</code></td><td>string</td><td><code>octave</code></td><td><code>octave</code>（オクターブ移動）/ <code>clamp</code> / <code>keep</code></td></tr>
-      <tr><td><code>assignment</code></td><td>string</td><td><code>auto</code></td><td><code>auto</code> / <code>track</code> / <code>channel</code></td></tr>
+      <tr><td><code>assignment</code></td><td>string</td><td><code>auto</code></td><td><code>auto</code> / <code>manual</code> / <code>track</code> / <code>channel</code></td></tr>
+      <tr><td><code>trackMap</code></td><td>object</td><td>null</td><td>トラック番号 → パート番号（0＝メロディ、1〜5＝和音、-1＝除外）。未指定のトラックは自動配分</td></tr>
       <tr><td><code>tieMode</code></td><td>string</td><td><code>melody</code></td><td><code>melody</code>（和音で&amp;を使わない）/ <code>all</code> / <code>none</code></td></tr>
       <tr><td><code>useN</code></td><td>boolean</td><td>true</td><td>短くなる場合に<code>n</code>コマンドを使う</td></tr>
       <tr><td><code>velocity</code></td><td>string</td><td><code>fine</code></td><td><code>fine</code> / <code>coarse</code> / <code>off</code></td></tr>
@@ -74,7 +75,19 @@ console.log(result.combined);   // MML@...,...,...;
     </tbody>
   </table>
 
-  <h3>1.2 レスポンス</h3>
+  <h3>1.2 トラックを手動で割り当てる</h3>
+  <p><code>trackMap</code> を使うと、MIDIのトラック番号を直接パートへ割り当てられます。キーがトラック番号（0始まり）、値がパート番号（0＝メロディ、1〜5＝和音1〜5、-1＝除外）です。指定しなかったトラックは空きパートへ自動配分されます。</p>
+
+<pre><code class="language-js">convertMidi(buffer, {
+  parts: 3,
+  assignment: 'manual',
+  trackMap: { 0: 0, 1: 1, 2: 2, 3: -1 }, // トラック3は除外
+});
+</code></pre>
+
+  <p>結果の <code>tracks</code> には、各トラックの名前・音符数・平均音高・最大同時発音数・割当先パートが入ります。サイトの「パート割当 → 手動（トラックを指定）」はこの仕組みを使っています。</p>
+
+  <h3>1.3 レスポンス</h3>
 <pre><code class="language-json">{
   "ok": true,
   "version": "1.0.0",
@@ -85,6 +98,9 @@ console.log(result.combined);   // MML@...,...,...;
   "partCount": 3,
   "parts": [
     { "index": 0, "name": "メロディ", "mml": "t104v14&gt;ed8c8...", "chars": 70, "notes": 38, "over": false }
+  ],
+  "tracks": [
+    { "index": 1, "name": "Melody", "notes": 56, "meanPitch": 71, "polyphony": 1, "part": 0, "mapped": true }
   ],
   "combined": "MML@t104v14&gt;ed8c8...,t104v10l8a&gt;c...,t104v10l1&lt;e...;",
   "stats": {
@@ -106,7 +122,7 @@ console.log(result.combined);   // MML@...,...,...;
 }
 </code></pre>
 
-  <h3>1.3 その他のエクスポート</h3>
+  <h3>1.4 その他のエクスポート</h3>
   <table>
     <thead><tr><th>関数</th><th>説明</th></tr></thead>
     <tbody>
