@@ -410,11 +410,22 @@ export function convertMidi(input, userOptions = {}) {
       message: `${usedParts}パート出力です。4パート目以降は合奏でのみ鳴るため、ソロ演奏では3パートまでとなります。`,
     });
   }
-  if (inputPoly > LIMITS.polyphony) {
+  const inst = instrumentById(opts.instrument);
+  if (usedParts > inst.voices) {
     warnings.push({
       level: 'warn',
-      code: 'polyphony',
-      message: `入力の同時発音数は最大${inputPoly}音でした。マビノギモバイルは1人あたり約15音が上限のため、音が欠ける場合があります。`,
+      code: 'instrument-polyphony',
+      message:
+        inst.voices === 1
+          ? `${inst.name}は同時1音（単音）しか鳴らせません。${usedParts}パート構成のため和音は鳴りません。和音を出すには同時発音数の多い楽器を選んでください。`
+          : `${inst.name}が同時に鳴らせるのは${inst.voices}音までです。${usedParts}パート構成のため、重なった部分は鳴りません。パート数を${inst.voices}以下にするか、同時発音数の多い楽器を選んでください。`,
+    });
+  }
+  if (inputPoly > LIMITS.polyphony) {
+    warnings.push({
+      level: 'info',
+      code: 'input-polyphony',
+      message: `入力の同時発音数は最大${inputPoly}音でした。MMLは6パート（各パート単音）までのため、超えた分はパート配分で間引かれます。`,
     });
   }
   if (opts.tieMode !== 'all' && result.parts.some((p) => p.mml.includes('&'))) {
@@ -428,10 +439,13 @@ export function convertMidi(input, userOptions = {}) {
     });
   }
   if (result.dropped) {
+    const splitUsed = opts.splitMap && Object.keys(opts.splitMap).length;
     warnings.push({
       level: 'info',
       code: 'voice-drop',
-      message: `同時に鳴る音がパート数を超えたため、${result.dropped}音を省略しました。パート数を増やすと残せます。`,
+      message: splitUsed
+        ? `声の数かパート数が足りないため、${result.dropped}音を省略しました。分割数を増やすか、パート数を増やすと残せます。`
+        : `同時に鳴る音がパート数を超えたため、${result.dropped}音を省略しました。パート数を増やすと残せます。`,
     });
   }
 
