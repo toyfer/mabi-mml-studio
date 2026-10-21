@@ -319,6 +319,24 @@ details.advanced summary::before { content: "▸"; font-size: 10px; transition: 
 details.advanced[open] summary::before { transform: rotate(90deg); }
 details.advanced .options-body { padding: 14px 0 0; }
 
+/* track map */
+.track-map { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; padding-right: 2px; }
+.track-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 6px;
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.track-name { min-width: 0; font-size: 12px; }
+.track-name b { display: block; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-name span { font-size: 10.5px; color: var(--muted-2); }
+.track-row select { padding: 4px 22px 4px 8px; font-size: 11.5px; }
+.seg button:disabled { opacity: .38; cursor: not-allowed; }
+
 /* editor */
 .editor { display: flex; flex-direction: column; min-height: 520px; }
 .tabs { display: flex; gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
