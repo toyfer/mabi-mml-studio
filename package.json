@@ -5,7 +5,7 @@
   "type": "module",
   "description": "MIDI to Mabinogi Mobile MML converter (static site + JS API)",
   "scripts": {
-    "test": "node tests/run.mjs",
+    "test": "node tests/roundtrip.mjs && node tests/run.mjs",
     "serve": "python3 -m http.server 8080"
   }
 }
