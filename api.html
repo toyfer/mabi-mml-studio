@@ -16,7 +16,7 @@
       <a href="./index.html">変換</a>
       <a href="./spec.html">仕様</a>
       <a href="./api.html" class="active">API</a>
-      <a href="https://github.com/toyfer/mabi-mml-studio" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </div>
 </header>
@@ -32,7 +32,7 @@
   <h2 id="js">1. JavaScript API</h2>
   <p>サイト上の <code>src/api.js</code> を読み込むだけで使えます。ビルド不要、外部依存なし。</p>
 
-<pre><code class="language-js">import { convertMidi } from 'https://toyfer.github.io/mabi-mml-studio/src/api.js';
+<pre><code class="language-js">import { convertMidi } from 'https://your-name.github.io/mabi-mml/src/api.js';
 
 const buffer = await file.arrayBuffer();
 const result = convertMidi(buffer, {
@@ -64,12 +64,13 @@ console.log(result.combined);   // MML@...,...,...;
       <tr><td><code>rangePolicy</code></td><td>string</td><td><code>octave</code></td><td><code>octave</code>（オクターブ移動）/ <code>clamp</code> / <code>keep</code></td></tr>
       <tr><td><code>assignment</code></td><td>string</td><td><code>auto</code></td><td><code>auto</code> / <code>manual</code> / <code>track</code> / <code>channel</code></td></tr>
       <tr><td><code>trackMap</code></td><td>object</td><td>null</td><td>トラック番号 → パート番号（0＝メロディ、1〜5＝和音、-1＝除外）。未指定のトラックは自動配分</td></tr>
+      <tr><td><code>splitMap</code></td><td>object</td><td>null</td><td>トラック番号 → 声数（2〜4）。同時に鳴る音を高い順に別々の声へ分け、単音のトラックにする</td></tr>
       <tr><td><code>tieMode</code></td><td>string</td><td><code>melody</code></td><td><code>melody</code>（和音で&amp;を使わない）/ <code>all</code> / <code>none</code></td></tr>
       <tr><td><code>useN</code></td><td>boolean</td><td>true</td><td>短くなる場合に<code>n</code>コマンドを使う</td></tr>
       <tr><td><code>velocity</code></td><td>string</td><td><code>fine</code></td><td><code>fine</code> / <code>coarse</code> / <code>off</code></td></tr>
       <tr><td><code>leadRest</code></td><td>string</td><td><code>auto</code></td><td><code>auto</code> / <code>always</code> / <code>never</code>（先頭に1小節の休符）</td></tr>
       <tr><td><code>autoFit</code></td><td>boolean</td><td>true</td><td>曲全体をo0〜o8に収める</td></tr>
-      <tr><td><code>autoReduce</code></td><td>boolean</td><td>true</td><td>文字数超過時に音符を削って収める</td></tr>
+      <tr><td><code>autoReduce</code></td><td>boolean</td><td>true</td><td>文字数超過時にパート数を減らす</td></tr>
       <tr><td><code>trim</code></td><td>boolean</td><td>false</td><td>収まらない場合に曲を打ち切る</td></tr>
       <tr><td><code>tempoEveryPart</code></td><td>boolean</td><td>true</td><td>全パートの先頭に<code>t</code>を書く</td></tr>
     </tbody>
@@ -87,7 +88,20 @@ console.log(result.combined);   // MML@...,...,...;
 
   <p>結果の <code>tracks</code> には、各トラックの名前・音符数・平均音高・最大同時発音数・割当先パートが入ります。サイトの「パート割当 → 手動（トラックを指定）」はこの仕組みを使っています。</p>
 
-  <h3>1.3 レスポンス</h3>
+  <h3>1.3 トラックを声部に分割する</h3>
+  <p><code>splitMap</code> は1つのトラックを複数の単音トラックへ分ける指定です。値が2〜4のトラックは、同じタイミングで鳴っている音を高い順に別々の声へ割り振り、<code>トラック名 [1]</code> のような別トラックとして扱います。ピアノの右手・左手・内声を別パートにしたいときに使います。声が埋まっている区間では直前の音を切って場所を明け、切れない場合はその音を間引きます（<code>stats.dropped</code> に加算）。</p>
+
+<pre><code class="language-js">convertMidi(buffer, {
+  parts: 6,
+  splitMap: { 2: 3 },              // トラック2を3声に分割
+  assignment: 'manual',
+  trackMap: { 4: 0, 5: 1, 6: 2 },  // 分割後のIDに割当
+});
+</code></pre>
+
+  <p>分割後の声は元のトラックより後ろの番号が振られます。どのIDがどの声かは、結果の <code>tracks</code> にある <code>src</code>（元トラック番号）・<code>voice</code>（何声目か）・<code>count</code>（分割数）で判定してください。元の和音が3音までなら、4声を指定しても3声しか現れません。</p>
+
+  <h3>1.4 レスポンス</h3>
 <pre><code class="language-json">{
   "ok": true,
   "version": "1.0.0",
@@ -97,10 +111,7 @@ console.log(result.combined);   // MML@...,...,...;
   "resolution": 192,
   "partCount": 3,
   "parts": [
-    { "index": 0, "name": "メロディ", "mml": "t104v14&gt;ed8c8...", "chars": 70, "notes": 38, "over": false }
-  ],
-  "tracks": [
-    { "index": 1, "name": "Melody", "notes": 56, "meanPitch": 71, "polyphony": 1, "part": 0, "mapped": true }
+    { "index": 0, "name": "メロディ", "mml": "t104v14>ed8c8...", "chars": 70, "notes": 38, "over": false }
   ],
   "combined": "MML@t104v14&gt;ed8c8...,t104v10l8a&gt;c...,t104v10l1&lt;e...;",
   "stats": {
@@ -122,7 +133,7 @@ console.log(result.combined);   // MML@...,...,...;
 }
 </code></pre>
 
-  <h3>1.4 その他のエクスポート</h3>
+  <h3>1.5 その他のエクスポート</h3>
   <table>
     <thead><tr><th>関数</th><th>説明</th></tr></thead>
     <tbody>
@@ -146,7 +157,7 @@ console.log(result.combined);   // MML@...,...,...;
   </table>
 
   <h3>2.1 multipart</h3>
-<pre><code class="language-bash">curl -X POST https://mabi-mml-api.example.workers.dev/v1/convert \
+<pre><code class="language-bash">curl -X POST https://mabi-mml.example.workers.dev/v1/convert \
   -F "midi=@song.mid" \
   -F "parts=6" \
   -F "tieMode=melody" \
@@ -154,13 +165,13 @@ console.log(result.combined);   // MML@...,...,...;
 </code></pre>
 
   <h3>2.2 JSON（base64）</h3>
-<pre><code class="language-bash">curl -X POST https://mabi-mml-api.example.workers.dev/v1/convert \
+<pre><code class="language-bash">curl -X POST https://mabi-mml.example.workers.dev/v1/convert \
   -H "content-type: application/json" \
   -d '{"midi":"TVRoZA...","options":{"parts":3,"grid":20}}'
 </code></pre>
 
   <h3>2.3 バイナリ直送</h3>
-<pre><code class="language-bash">curl -X POST https://mabi-mml-api.example.workers.dev/v1/convert \
+<pre><code class="language-bash">curl -X POST https://mabi-mml.example.workers.dev/v1/convert \
   -H "content-type: application/octet-stream" \
   --data-binary @song.mid
 </code></pre>
@@ -204,7 +215,7 @@ wrangler deploy worker/index.js --name mabi-mml-api --compatibility-date 2026-01
 </footer>
 
 <script type="module">
-import { parseScore, LIMITS } from './src/api.js';
+import { parseScore, parseMML, LIMITS } from './src/api.js';
 
 const input = document.getElementById('pg-input');
 const out = document.getElementById('pg-out');
@@ -261,4 +272,3 @@ input.addEventListener('input', run);
 run();
 </script>
 </body>
-</html>
