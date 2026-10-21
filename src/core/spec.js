@@ -13,7 +13,7 @@ export const LIMITS = {
   tempoMax: 255,
   volumeMin: 0,
   volumeMax: 15,
-  polyphony: 15,
+  polyphony: 6,
   lMax: 384,
 };
 
