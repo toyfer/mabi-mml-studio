@@ -20,6 +20,7 @@ const state = {
   active: 0,
   limit: LIMITS.charsPerPart,
   manual: false,
+  trackMap: null,
 };
 
 const player = new MabiPlayer();
@@ -55,6 +56,15 @@ function readOptions() {
     } else {
       o[key] = el.value;
     }
+  }
+  if (o.assignment === 'manual') {
+    if (!state.trackMap && state.result && state.result.tracks) {
+      state.trackMap = {};
+      state.result.tracks.forEach((t) => {
+        state.trackMap[String(t.index)] = t.part >= 0 ? t.part : -1;
+      });
+    }
+    if (state.trackMap) o.trackMap = { ...state.trackMap };
   }
   return o;
 }
@@ -98,6 +108,7 @@ function convert() {
 function loadFile(buffer, name) {
   state.buffer = buffer;
   state.fileName = name;
+  state.trackMap = null;
   $('#hero').hidden = true;
   $('#studio').hidden = false;
   $('#fileName').textContent = name;
@@ -122,6 +133,7 @@ function render() {
   renderTabs();
   renderStats();
   renderWarnings();
+  renderTrackMap(result.tracks || []);
   selectPart(state.active);
 }
 
@@ -212,6 +224,47 @@ function renderWarnings() {
   list.innerHTML = warnings
     .map((w) => `<div class="warn-item ${w.level}">${escapeHtml(w.message)}</div>`)
     .join('');
+}
+
+function renderTrackMap(tracks) {
+  const wrap = $('#trackMapWrap');
+  const manual = $('#assignment').value === 'manual';
+  const seg = $('.seg[data-opt="parts"]');
+  if (seg) $$('button', seg).forEach((b) => { b.disabled = manual; });
+  wrap.hidden = !(manual && tracks.length);
+  if (wrap.hidden) return;
+
+  const box = $('#trackMap');
+  box.innerHTML = '';
+  tracks.forEach((t) => {
+    const row = document.createElement('div');
+    row.className = 'track-row';
+
+    const info = document.createElement('div');
+    info.className = 'track-name';
+    info.innerHTML = `<b>${escapeHtml(t.name)}</b><span>${t.notes}音 · 平均${t.meanPitch} · 最大${t.polyphony}音</span>`;
+
+    const sel = document.createElement('select');
+    sel.innerHTML = ['<option value="">自動</option>', '<option value="-1">除外</option>']
+      .concat(PART_NAMES.map((n, i) => `<option value="${i}">${n}</option>`))
+      .join('');
+    const current = state.trackMap ? state.trackMap[String(t.index)] : t.part;
+    sel.value = current === null || current === undefined ? '' : String(current);
+    sel.addEventListener('change', () => {
+      if (!state.trackMap) {
+        state.trackMap = {};
+        tracks.forEach((x) => {
+          state.trackMap[String(x.index)] = x.part >= 0 ? x.part : -1;
+        });
+      }
+      if (sel.value === '') delete state.trackMap[String(t.index)];
+      else state.trackMap[String(t.index)] = Number(sel.value);
+      convert();
+    });
+
+    row.append(info, sel);
+    box.appendChild(row);
+  });
 }
 
 function escapeHtml(s) {
@@ -376,6 +429,7 @@ async function applyShared(data) {
   state.instrument = data.instrument || 'lute';
   state.fileName = data.name || 'shared.mml';
   state.manual = true;
+  state.trackMap = null;
   state.limit = Number($('#charLimit').value) || LIMITS.charsPerPart;
   state.active = 0;
   setOption('bpm', state.bpm);
@@ -505,7 +559,10 @@ $$('[data-opt]').forEach((el) => {
   } else if (el.type === 'checkbox') {
     el.addEventListener('change', convert);
   } else if (el.tagName === 'SELECT') {
-    el.addEventListener('change', convert);
+    el.addEventListener('change', () => {
+      if (el.dataset.opt === 'assignment' && el.value !== 'manual') state.trackMap = null;
+      convert();
+    });
   } else if (el.type === 'number') {
     el.addEventListener('change', convert);
   }
