@@ -92,6 +92,22 @@
           </div>
 
           <div class="opt">
+            <label for="assignment">パート割当</label>
+            <select id="assignment" data-opt="assignment">
+              <option value="auto">自動（音域＋和音）</option>
+              <option value="manual">手動（トラックを指定）</option>
+              <option value="track">MIDIトラック順</option>
+              <option value="channel">MIDIチャンネル順</option>
+            </select>
+          </div>
+
+          <div class="opt" id="trackMapWrap" hidden>
+            <label>トラック → パート</label>
+            <div class="track-map" id="trackMap"></div>
+            <p class="note">各トラックを メロディ／和音1〜5／除外 に割り当てます。「自動」のままなら空きパートへ配分します。</p>
+          </div>
+
+          <div class="opt">
             <label for="instrument">楽器（同時発音の目安）</label>
             <select id="instrument" data-opt="instrument">
               <option value="lute">リュート — 3音</option>
@@ -154,14 +170,6 @@
                   <option value="fine">細かく再現（0〜15）</option>
                   <option value="coarse">粗く再現（5段階）</option>
                   <option value="off">使わない（文字数節約）</option>
-                </select>
-              </div>
-              <div class="opt">
-                <label for="assignment">パート割当</label>
-                <select id="assignment" data-opt="assignment">
-                  <option value="auto">自動（音域＋和音）</option>
-                  <option value="track">MIDIトラック順</option>
-                  <option value="channel">MIDIチャンネル順</option>
                 </select>
               </div>
               <div class="opt">
