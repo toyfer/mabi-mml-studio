@@ -26,7 +26,7 @@ const state = {
 };
 
 const player = new MabiPlayer();
-const history = [];
+const undoStack = [];
 let roll = null;
 
 function toast(message, kind = 'info') {
@@ -94,7 +94,7 @@ function convert() {
     state.instrument = opts.instrument;
     state.limit = opts.charLimit || LIMITS.charsPerPart;
     state.active = 0;
-    history.length = 0;
+    undoStack.length = 0;
     render();
   } catch (err) {
     console.error(err);
@@ -306,13 +306,13 @@ function escapeHtml(s) {
 /* ---------------- note editing ---------------- */
 
 function pushHistory() {
-  history.push([...state.texts]);
-  if (history.length > 30) history.shift();
+  undoStack.push([...state.texts]);
+  if (undoStack.length > 30) undoStack.shift();
 }
 
 function undo() {
-  if (!history.length) return;
-  state.texts = history.pop();
+  if (!undoStack.length) return;
+  state.texts = undoStack.pop();
   const text = state.texts[state.active] || '';
   $('#code').value = text;
   updateMeter(text);
@@ -626,7 +626,7 @@ $('#reset').addEventListener('click', () => {
   player.stop();
   state.buffer = null;
   state.texts = [];
-  history.length = 0;
+  undoStack.length = 0;
   $('#play').textContent = '▶ 試聴';
   $('#hero').hidden = false;
   $('#studio').hidden = true;
