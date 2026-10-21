@@ -1,5 +1,6 @@
 import { convertMidi, VERSION } from '../core/convert.js';
-import { parseScore } from '../core/mml.js';
+import { parseScore, describeNote } from '../core/mml.js';
+import { encodePart } from '../core/encode.js';
 import { LIMITS, PART_NAMES } from '../core/spec.js';
 import { MabiPlayer } from './player.js';
 import { PianoRoll, PART_COLORS } from './pianoroll.js';
@@ -25,6 +26,7 @@ const state = {
 };
 
 const player = new MabiPlayer();
+const history = [];
 let roll = null;
 
 function toast(message, kind = 'info') {
@@ -92,6 +94,7 @@ function convert() {
     state.instrument = opts.instrument;
     state.limit = opts.charLimit || LIMITS.charsPerPart;
     state.active = 0;
+    history.length = 0;
     render();
   } catch (err) {
     console.error(err);
@@ -298,6 +301,59 @@ function renderTrackMap(tracks) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+/* ---------------- note editing ---------------- */
+
+function pushHistory() {
+  history.push([...state.texts]);
+  if (history.length > 30) history.shift();
+}
+
+function undo() {
+  if (!history.length) return;
+  state.texts = history.pop();
+  const text = state.texts[state.active] || '';
+  $('#code').value = text;
+  updateMeter(text);
+  updateRoll();
+  toast('元に戻しました');
+}
+
+function moveNote(partIndex, noteIndex, pitch) {
+  const parsed = parseScore(state.texts[partIndex] || '')[0];
+  const target = parsed.events[noteIndex];
+  if (!target) return;
+  const grid = (state.result && state.result.grid) || 20;
+  const tieMode = $('#tieMode').value;
+  const ties = tieMode === 'all' ? true : tieMode === 'none' ? false : partIndex === 0;
+  const notes = parsed.events.map((e, i) => ({
+    start: e.start,
+    dur: e.dur,
+    pitch: i === noteIndex ? pitch : e.pitch,
+    vel: Math.round(((e.vel / 15) ** 2) * 127),
+  }));
+  const out = encodePart(notes, {
+    bpm: state.bpm,
+    showTempo: true,
+    useN: $('#useN').checked,
+    velocity: $('#velocity').value,
+    ties,
+    leadRest: false,
+    minDur: grid,
+  });
+  pushHistory();
+  state.texts[partIndex] = out.text;
+  if (state.active === partIndex) {
+    $('#code').value = out.text;
+    updateMeter(out.text);
+  }
+  updateRoll();
+  if (pitch < LIMITS.midiMin || pitch > LIMITS.midiMax) {
+    toast(`${describeNote(pitch)} はMMLの音域外（o0〜o8）です。この音は鳴りません`, 'error');
+  } else {
+    toast(`${describeNote(pitch)} に移動しました`);
+  }
 }
 
 /* ---------------- text editing ---------------- */
@@ -570,6 +626,7 @@ $('#reset').addEventListener('click', () => {
   player.stop();
   state.buffer = null;
   state.texts = [];
+  history.length = 0;
   $('#play').textContent = '▶ 試聴';
   $('#hero').hidden = false;
   $('#studio').hidden = true;
@@ -603,32 +660,28 @@ $('#bpmAuto').addEventListener('click', () => {
   convert();
 });
 
-/* ---------------- keyboard & roll seek ---------------- */
+/* ---------------- keyboard ---------------- */
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.matches('input, textarea, select')) return;
+  const inField = e.target.matches('input, textarea, select');
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !inField) {
+    e.preventDefault();
+    undo();
+    return;
+  }
+  if (inField) return;
   if (e.code === 'Space') {
     e.preventDefault();
     $('#play').click();
   }
 });
 
-function bindRollSeek() {
-  const canvas = $('#roll');
-  canvas.addEventListener('click', (e) => {
-    const parsed = parsedParts();
-    const duration = Math.max(1, ...parsed.map((p) => p.duration));
-    const rect = canvas.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    const tick = ratio * duration;
-    player.seek(tick);
-  });
-}
-
 /* ---------------- boot ---------------- */
 
 roll = new PianoRoll($('#roll'));
-bindRollSeek();
+roll.onSeek = (tick) => player.seek(tick);
+roll.onSelect = (i) => selectPart(i);
+roll.onMove = moveNote;
 player.setVolume(0.8);
 
 (async function boot() {
