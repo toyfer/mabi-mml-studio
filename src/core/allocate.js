@@ -2,11 +2,11 @@ import { clamp } from './spec.js';
 
 const meanPitch = (notes) => (notes.length ? notes.reduce((s, n) => s + n.pitch, 0) / notes.length : 60);
 
-export function dedupeNotes(notes, minDur) {
+export function dedupeNotes(notes, minDur, byTrack = false) {
   const map = new Map();
   for (const n of notes) {
     if (n.pitch < 0 || n.pitch > 127) continue;
-    const key = `${n.start}:${n.pitch}`;
+    const key = byTrack ? `${n.trk}:${n.start}:${n.pitch}` : `${n.start}:${n.pitch}`;
     const prev = map.get(key);
     if (!prev || n.vel > prev.vel) map.set(key, n);
   }
@@ -18,10 +18,101 @@ export function dedupeNotes(notes, minDur) {
     .sort((a, b) => a.start - b.start || b.pitch - a.pitch || b.vel - a.vel);
 }
 
-export function allocateParts(notes, { parts = 3, mode = 'auto', minDur = 20 } = {}) {
+export function describeTracks(notes) {
+  const map = new Map();
+  for (const n of notes) {
+    const trk = n.trk >= 0 ? n.trk : 0;
+    if (!map.has(trk)) map.set(trk, { index: trk, trk, ch: n.ch || 0, notes: [] });
+    map.get(trk).notes.push(n);
+  }
+  return [...map.values()]
+    .sort((a, b) => a.trk - b.trk)
+    .map((g) => ({ ...g, meanPitch: meanPitch(g.notes), polyphony: maxPolyphony(g.notes) }));
+}
+
+export function allocateParts(notes, { parts = 3, mode = 'auto', minDur = 20, trackMap = null } = {}) {
   const count = clamp(parts, 1, 6);
+  if (trackMap && Object.keys(trackMap).length) return allocateMapped(notes, count, trackMap, minDur);
   if (mode === 'track' || mode === 'channel') return allocateByGroup(notes, count, mode, minDur);
   return allocateAuto(notes, count, minDur);
+}
+
+function makeSlot(index) {
+  return { index, notes: [], end: -Infinity, sum: 0, count: 0, locked: false };
+}
+
+function allocateMapped(notes, partCount, trackMap, minDur) {
+  const slots = Array.from({ length: partCount }, (_, i) => makeSlot(i));
+  const rest = [];
+
+  for (const n of notes) {
+    const raw = trackMap[String(n.trk)];
+    if (raw === undefined || raw === null) {
+      rest.push(n);
+      continue;
+    }
+    const target = Number(raw);
+    if (target < 0) continue;
+    if (target >= partCount) {
+      rest.push(n);
+      continue;
+    }
+    slots[target].locked = true;
+    slots[target].notes.push(n);
+  }
+
+  let dropped = 0;
+  for (const slot of slots) {
+    if (!slot.locked) continue;
+    slot.notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch || b.vel - a.vel);
+    const mono = [];
+    let end = -Infinity;
+    for (const n of slot.notes) {
+      if (n.start < end) {
+        const prev = mono[mono.length - 1];
+        if (prev && n.start - prev.start >= minDur) {
+          prev.dur = n.start - prev.start;
+          prev.end = n.start;
+        } else {
+          dropped++;
+          continue;
+        }
+      }
+      mono.push({ ...n });
+      end = n.start + n.dur;
+    }
+    slot.notes = mono;
+    slot.end = mono.length ? mono[mono.length - 1].start + mono[mono.length - 1].dur : -Infinity;
+    slot.sum = mono.reduce((s, n) => s + n.pitch, 0);
+    slot.count = mono.length;
+  }
+
+  for (const n of rest) {
+    let best = null;
+    let bestScore = Infinity;
+    for (const slot of slots) {
+      if (slot.locked) continue;
+      if (slot.end > n.start) continue;
+      const mean = slot.count ? slot.sum / slot.count : n.pitch;
+      let score = Math.abs(mean - n.pitch);
+      if (slot.index === 0) score += 6;
+      if (!slot.count) score += 4;
+      if (score < bestScore) {
+        bestScore = score;
+        best = slot;
+      }
+    }
+    if (best) {
+      best.notes.push(n);
+      best.end = n.start + n.dur;
+      best.sum += n.pitch;
+      best.count++;
+    } else {
+      dropped++;
+    }
+  }
+
+  return { parts: slots.map((s) => s.notes.sort((a, b) => a.start - b.start)), dropped };
 }
 
 function extractMelody(notes) {
