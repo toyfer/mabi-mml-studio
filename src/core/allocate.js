@@ -18,6 +18,42 @@ export function dedupeNotes(notes, minDur, byTrack = false) {
     .sort((a, b) => a.start - b.start || b.pitch - a.pitch || b.vel - a.vel);
 }
 
+export function splitTrackVoices(notes, count, minDur) {
+  const voices = Array.from({ length: count }, () => ({ notes: [], end: -Infinity }));
+  const byStart = new Map();
+  for (const n of notes) {
+    if (!byStart.has(n.start)) byStart.set(n.start, []);
+    byStart.get(n.start).push(n);
+  }
+  let dropped = 0;
+  for (const start of [...byStart.keys()].sort((a, b) => a - b)) {
+    const chord = byStart.get(start).sort((a, b) => b.pitch - a.pitch);
+    let slot = 0;
+    for (const n of chord) {
+      while (slot < count && voices[slot].end > start) slot++;
+      if (slot >= count) {
+        let victim = 0;
+        for (let i = 1; i < count; i++) if (voices[i].end < voices[victim].end) victim = i;
+        const last = voices[victim].notes[voices[victim].notes.length - 1];
+        if (last && start - last.start >= minDur) {
+          last.dur = start - last.start;
+          last.end = start;
+          voices[victim].end = start;
+          slot = victim;
+        } else {
+          dropped++;
+          continue;
+        }
+      }
+      const note = { ...n };
+      voices[slot].notes.push(note);
+      voices[slot].end = start + note.dur;
+      slot++;
+    }
+  }
+  return { voices: voices.map((v) => v.notes), dropped };
+}
+
 export function describeTracks(notes) {
   const map = new Map();
   for (const n of notes) {
@@ -38,7 +74,11 @@ export function allocateParts(notes, { parts = 3, mode = 'auto', minDur = 20, tr
 }
 
 function makeSlot(index) {
-  return { index, notes: [], end: -Infinity, sum: 0, count: 0, locked: false };
+  return { index, notes: [], end: -Infinity, sum: 0, count: 0, locked: false, trk: new Map() };
+}
+
+function noteTrack(slot, trk) {
+  slot.trk.set(trk, (slot.trk.get(trk) || 0) + 1);
 }
 
 function allocateMapped(notes, partCount, trackMap, minDur) {
@@ -59,12 +99,13 @@ function allocateMapped(notes, partCount, trackMap, minDur) {
     }
     slots[target].locked = true;
     slots[target].notes.push(n);
+    noteTrack(slots[target], n.trk);
   }
 
   let dropped = 0;
   for (const slot of slots) {
     if (!slot.locked) continue;
-    slot.notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch || b.vel - a.vel);
+    slot.notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch || a.vel - b.vel);
     const mono = [];
     let end = -Infinity;
     for (const n of slot.notes) {
@@ -88,6 +129,28 @@ function allocateMapped(notes, partCount, trackMap, minDur) {
   }
 
   for (const n of rest) {
+    const home = slots.find((s) => !s.locked && (s.trk.get(n.trk) || 0) > 0);
+    if (home) {
+      if (home.end <= n.start) {
+        home.notes.push(n);
+        home.end = n.start + n.dur;
+        home.sum += n.pitch;
+        home.count++;
+        noteTrack(home, n.trk);
+        continue;
+      }
+      const last = home.notes[home.notes.length - 1];
+      if (last && n.start - last.start >= minDur) {
+        last.dur = n.start - last.start;
+        last.end = n.start;
+        home.notes.push(n);
+        home.end = n.start + n.dur;
+        home.sum += n.pitch - last.pitch;
+        noteTrack(home, n.trk);
+        continue;
+      }
+    }
+
     let best = null;
     let bestScore = Infinity;
     for (const slot of slots) {
@@ -107,6 +170,7 @@ function allocateMapped(notes, partCount, trackMap, minDur) {
       best.end = n.start + n.dur;
       best.sum += n.pitch;
       best.count++;
+      noteTrack(best, n.trk);
     } else {
       dropped++;
     }
@@ -133,7 +197,7 @@ function extractMelody(notes) {
   }
   const src = (best ? best.notes : notes)
     .slice()
-    .sort((a, b) => a.start - b.start || b.pitch - a.pitch || b.vel - a.vel);
+    .sort((a, b) => a.start - b.start || a.pitch - b.pitch || a.vel - b.vel);
   const line = [];
   let end = -Infinity;
   let onset = -1;
