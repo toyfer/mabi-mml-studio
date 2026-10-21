@@ -7,7 +7,7 @@ import {
   fitWholeSong,
   tempoChangeCount,
 } from './quantize.js';
-import { dedupeNotes, allocateParts, maxPolyphony } from './allocate.js';
+import { dedupeNotes, allocateParts, maxPolyphony, describeTracks } from './allocate.js';
 import { encodeScore, encodePart } from './encode.js';
 import { LIMITS, WHOLE, TPQN, clamp, instrumentById, PART_NAMES } from './spec.js';
 
@@ -24,6 +24,7 @@ export const DEFAULT_OPTIONS = {
   charLimit: LIMITS.charsPerPart,
   rangePolicy: 'octave',
   assignment: 'auto',
+  trackMap: null,
   tieMode: 'melody',
   useN: true,
   velocity: 'fine',
@@ -107,9 +108,46 @@ function smoothVelocity(notes) {
   });
 }
 
-function attempt(midiNotes, opts, bpm, grid, partCount) {
+function trackReport(notes, parts, trackMap, names) {
+  const keyOf = (n) => `${n.start}:${n.pitch}:${n.trk}:${n.ch}`;
+  const owner = new Map();
+  parts.forEach((list, i) => list.forEach((n) => owner.set(keyOf(n), i)));
+  return describeTracks(notes).map((t) => {
+    const counts = new Map();
+    for (const n of t.notes) {
+      const p = owner.get(keyOf(n));
+      if (p !== undefined) counts.set(p, (counts.get(p) || 0) + 1);
+    }
+    let best = -1;
+    let bestCount = 0;
+    for (const [p, c] of counts) {
+      if (c > bestCount) {
+        best = p;
+        bestCount = c;
+      }
+    }
+    const raw = trackMap ? trackMap[String(t.trk)] : undefined;
+    const mapped = raw === undefined || raw === null ? null : Number(raw);
+    return {
+      index: t.index,
+      name: names[t.trk] || `トラック${t.trk + 1}`,
+      notes: t.notes.length,
+      meanPitch: Math.round(t.meanPitch),
+      polyphony: t.polyphony,
+      part: mapped === null || Number.isNaN(mapped) ? best : mapped,
+      mapped: mapped !== null && !Number.isNaN(mapped),
+    };
+  });
+}
+
+function attempt(midiNotes, opts, bpm, grid, partCount, trackNames = []) {
   const prep = prepare(midiNotes, opts, bpm, grid);
-  const alloc = allocateParts(prep.notes, { parts: partCount, mode: opts.assignment, minDur: grid });
+  const alloc = allocateParts(prep.notes, {
+    parts: partCount,
+    mode: opts.assignment,
+    minDur: grid,
+    trackMap: opts.trackMap,
+  });
   alloc.parts = alloc.parts.map(smoothVelocity);
   const leadRest = opts.leadRest === 'always' || (opts.leadRest === 'auto' && shouldLeadRest(alloc.parts));
   const encoded = encodeAll(alloc.parts, opts, bpm, grid, leadRest);
@@ -120,6 +158,7 @@ function attempt(midiNotes, opts, bpm, grid, partCount) {
     clamped: prep.ranged.clamped,
     dropped: alloc.dropped,
     leadRest,
+    tracks: trackReport(prep.notes, alloc.parts, opts.trackMap, trackNames),
   };
 }
 
@@ -143,7 +182,7 @@ function partChars(notes, opts, bpm, grid, leadRest, index) {
 }
 
 function splitOverflow(noteList, opts, bpm, grid, leadRest, maxParts) {
-  const parts = noteList.filter((n) => n.length > 0);
+  const parts = opts.trackMap ? noteList.map((n) => n) : noteList.filter((n) => n.length > 0);
   let guard = 0;
   while (guard++ < 24 && parts.length < maxParts) {
     const sizes = parts.map((p, i) => partChars(p, opts, bpm, grid, leadRest, i));
@@ -225,11 +264,16 @@ export function convertMidi(input, userOptions = {}) {
     });
   }
 
+  const trackMap =
+    opts.trackMap && typeof opts.trackMap === 'object' && Object.keys(opts.trackMap).length ? opts.trackMap : null;
+  const mappedMax = trackMap ? Math.max(-1, ...Object.values(trackMap).map((v) => Number(v))) : -1;
+  const requestedParts = clamp(Math.max(opts.parts, mappedMax + 1), 1, LIMITS.parts);
+
   const grids = [...new Set([opts.grid, 40, 60, 80, 120, 160, 240].filter((g) => g >= opts.grid))];
-  const splitCap = opts.parts > LIMITS.soloParts ? LIMITS.parts : opts.parts;
+  const splitCap = requestedParts > LIMITS.soloParts ? LIMITS.parts : requestedParts;
   let result = null;
   for (const grid of grids) {
-    const candidate = attempt(midi.notes, opts, bpm, grid, opts.parts);
+    const candidate = attempt(midi.notes, opts, bpm, grid, requestedParts, midi.trackNames);
     if (!result || candidate.maxChars < result.maxChars) result = candidate;
     if (candidate.maxChars <= opts.charLimit) {
       result = candidate;
@@ -343,7 +387,10 @@ export function convertMidi(input, userOptions = {}) {
   const outNotes = result.noteList.flat();
   const lastTick = outNotes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
   const durationSec = (lastTick / TPQN) * (60 / bpm);
-  const parts = result.parts.filter((p) => p.notes > 0);
+  const lastUsed = result.parts.reduce((m, p, i) => (p.notes > 0 ? i : m), -1);
+  const parts = trackMap
+    ? result.parts.slice(0, Math.max(0, lastUsed) + 1)
+    : result.parts.filter((p) => p.notes > 0);
   const finalParts = parts.length ? parts : [result.parts[0]];
   const combined = `MML@${finalParts.map((p) => p.mml).join(',')};`;
 
@@ -357,6 +404,7 @@ export function convertMidi(input, userOptions = {}) {
     resolution: Math.round(WHOLE / result.grid),
     partCount: finalParts.length,
     parts: finalParts,
+    tracks: result.tracks || [],
     combined,
     stats: {
       inputNotes: midi.notes.length,
